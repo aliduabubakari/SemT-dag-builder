@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "semt-dag-builder"
+version = "0.1.0"
+description = "Convert Jupyter notebooks to runnable SemT pipeline scripts and Airflow DAGs."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+authors = [{ name = "SemT-DAG-Builder Authors", email = "example@example.com" }]
+keywords = ["semt", "dag", "airflow", "notebook", "pipeline", "automation"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+
+dependencies = [
+  "nbformat>=5.9.0",
+  "jinja2>=3.1.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black>=23.3.0",
+  "autopep8>=2.0.0",
+  "pytest>=7.4.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/aliduabubakari/SemT-dag-builder"
+Issues = "https://github.com/aliduabubakari/SemT-dag-builder/issues"
+
+[project.scripts]
+nb2scripts = "nb2scripts.cli:main"
+semt-dag-builder = "nb2scripts.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["nb2scripts*"]
+
+[tool.setuptools.package-data]
+nb2scripts = [
+  "templates/*.j2",
+  "templates/operations/*.j2"
+]

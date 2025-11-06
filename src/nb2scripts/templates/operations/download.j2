@@ -1,0 +1,26 @@
+def run_download_operation_{{ index }}(config: Config, file_manager: PipelineFileManager):
+    """DOWNLOAD Operation: Export final CSV"""
+    logger.info("=== DOWNLOAD OPERATION ===")
+
+    # Load current state
+    table_data = file_manager.load_current_state()
+    if not table_data:
+        raise RuntimeError("No table_data from previous stage")
+
+    table_id = table_data.get('table', {}).get('id')
+    if not table_id:
+        raise ValueError("No table ID in table_data")
+
+    # Initialize managers
+    auth_manager = AuthManager(config.auth_api_url, config.username, config.password)
+    utility = Utility(config.table_base_url, auth_manager)
+
+    # Download
+    output_file = "{{ params.output_file | default('final_output.csv') }}"
+    output_path = os.path.join(config.data_dir, output_file)
+
+    logger.info(f"⬇️  Downloading to: {output_path}")
+    csv_path = utility.download_csv(config.dataset_id, table_id, output_path)
+
+    logger.info(f"✅ CSV downloaded: {csv_path}")
+    return csv_path

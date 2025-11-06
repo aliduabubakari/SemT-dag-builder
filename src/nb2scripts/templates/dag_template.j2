@@ -1,0 +1,134 @@
+# dags/{{ dag_name }}.py
+"""
+{{ dag_name }} - Auto-generated Airflow DAG
+Generated: {{ timestamp.strftime('%Y-%m-%d %H:%M:%S') }}
+
+Pipeline stages:
+{% for script in scripts %}
+  {{ loop.index }}. {{ script.name }} ({{ script.operations|length }} operations)
+{% endfor %}
+"""
+
+from __future__ import annotations
+import os
+import glob
+import pendulum
+from airflow.models.dag import DAG
+from airflow.providers.docker.operators.docker import DockerOperator
+from airflow.operators.python import PythonOperator
+from docker.types import Mount
+
+# Configuration
+HOST_DATA_DIR = "/app/data"
+CONTAINER_DATA_DIR = "/app/data"
+DAG_RUN_ID_TEMPLATE = "{{ ds_nodash }}_{{ ts_nodash }}"
+
+def find_latest_csv_file(**kwargs):
+    """Find the most recently modified CSV file in data directory."""
+    run_id = kwargs['params']['run_id']
+
+    search_path = os.path.join(CONTAINER_DATA_DIR, '*.csv')
+    files = glob.glob(search_path)
+
+    if not files:
+        raise FileNotFoundError(f"No CSV files found in {CONTAINER_DATA_DIR}")
+
+    latest_file = max(files, key=os.path.getmtime)
+    print(f"✅ Found input CSV: {latest_file}")
+    print(f"📋 Run ID: {run_id}")
+    return latest_file
+
+def cleanup_successful_run(**kwargs):
+    """Log completion and optionally clean up files."""
+    run_id = kwargs['params']['run_id']
+    print("="*60)
+    print("✅ Pipeline completed successfully!")
+    print(f"📋 Run ID: {run_id}")
+    print("📊 Stages: {% for s in scripts %}{{ s.name }}{% if not loop.last %} → {% endif %}{% endfor %}")
+    print("="*60)
+
+with DAG(
+    dag_id="{{ dag_id }}",
+    start_date=pendulum.datetime(2025, 1, 1, tz="UTC"),
+    catchup=False,
+    schedule=None,
+    doc_md="""
+    ## {{ dag_name }}
+
+    Auto-generated pipeline with {{ scripts|length }} stages.
+
+    ### Stages
+{% for script in scripts %}
+    {{ loop.index }}. **{{ script.name }}**
+{% for op in script.operations %}
+       - {{ op.op_type }}: {{ op.name }}
+{% endfor %}
+{% endfor %}
+    """,
+    tags=["generated", "semt-pipeline", "{{ dag_name }}"],
+    params={
+        "run_id": DAG_RUN_ID_TEMPLATE,
+        "architecture": "deterministic"
+    }
+) as dag:
+
+    find_input = PythonOperator(
+        task_id="find_input_file",
+        python_callable=find_latest_csv_file,
+        params={"run_id": DAG_RUN_ID_TEMPLATE},
+        doc_md="Discovers the most recent CSV file for processing"
+    )
+
+{% for script in scripts %}
+{% set safe_task_name = script.name | replace('-', '_') | replace('.', '_') | regex_replace('^stage\\d+_', 'task_') %}
+
+    # Task {{ loop.index }}: {{ script.name }}
+    {{ safe_task_name }} = DockerOperator(
+        task_id="{{ script.name }}",
+        image="semt-pipeline:latest",
+        command=["python", "/app/scripts/{{ script.filename }}"],
+        environment={
+            "RUN_ID": DAG_RUN_ID_TEMPLATE,
+            "STAGE_NAME": "{{ script.name }}",
+            "STAGE_NUMBER": "{{ loop.index }}",
+{% if loop.index == 1 %}
+            "INPUT_FILE_PATH": "{{ "{{ ti.xcom_pull(task_ids='find_input_file') }}" }}",
+{% else %}
+            "INPUT_JSON_PATH": "{{ "{{ ti.xcom_pull(task_ids='" + scripts[loop.index-2].name + "') }}" }}",
+{% endif %}
+            "API_BASE_URL": "http://node-server-api:3003",
+            "API_USERNAME": "test",
+            "API_PASSWORD": "test",
+            "DATA_DIR": "/app/data",
+            "PYTHONPATH": "/app",
+{% for key, value in script.env_vars.items() %}
+            "{{ key }}": "{{ value }}",
+{% endfor %}
+        },
+        do_xcom_push=True,
+        auto_remove=True,
+        docker_url="unix://var/run/docker.sock",
+        network_mode="semt_pipeline_network",
+        mounts=[Mount(source=HOST_DATA_DIR, target=CONTAINER_DATA_DIR, type="bind")],
+        mount_tmp_dir=False,
+        doc_md="""
+        ### {{ script.name }}
+
+        Operations:
+{% for op in script.operations %}
+        - {{ op.op_type }}: {{ op.name }}
+{% endfor %}
+        """
+    )
+{% endfor %}
+
+    # Dependencies
+{% set first_task = scripts[0].name | replace('-', '_') | replace('.', '_') | regex_replace('^stage\\d+_', 'task_') %}
+    find_input >> {{ first_task }}
+{% for idx in range(1, scripts|length) %}
+{% set prev_task = scripts[idx-1].name | replace('-', '_') | replace('.', '_') | regex_replace('^stage\\d+_', 'task_') %}
+{% set curr_task = scripts[idx].name | replace('-', '_') | replace('.', '_') | regex_replace('^stage\\d+_', 'task_') %}
+    {{ prev_task }} >> {{ curr_task }}
+{% endfor %}
+{% set last_task = scripts[-1].name | replace('-', '_') | replace('.', '_') | regex_replace('^stage\\d+_', 'task_') %}
+    {{ last_task }}

@@ -1,0 +1,63 @@
+def run_extend_operation_{{ index }}(config: Config, file_manager: PipelineFileManager):
+    """
+    EXTEND Operation: {{ op.name }}
+    Column: {{ params.column_name }}
+    Extender: {{ params.extender_id }}
+    """
+    logger.info("=== EXTEND OPERATION: {{ op.name }} ===")
+
+    # Load current state
+    table_data = file_manager.load_current_state()
+    if not table_data:
+        raise RuntimeError("No table_data from previous stage")
+
+    # Extract table_id
+    table_id = table_data.get('table', {}).get('id')
+    if not table_id:
+        raise ValueError("No table ID in table_data")
+
+    logger.info(f"🔧 Extending table: {table_id}")
+
+    # Initialize managers
+    auth_manager = AuthManager(config.auth_api_url, config.username, config.password)
+    extension_manager = ExtensionManager(config.table_base_url, auth_manager.get_token())
+    utility = Utility(config.table_base_url, auth_manager)
+
+    # Parameters
+    column_name = "{{ params.column_name }}"
+    extender_id = "{{ params.extender_id }}"
+    properties = "{{ params.properties }}"
+    other_params = {{ params.other_params | default({}) | tojson }}
+    deduplicate = {{ 'True' if (params.deduplicate | default(false)) else 'False' }}
+
+    logger.info(f"   Column: {column_name}")
+    logger.info(f"   Extender: {extender_id}")
+    logger.info(f"   Properties: {properties}")
+
+    # Extend
+    try:
+        extended_table, backend_payload = extension_manager.extend_column(
+            table=table_data,
+            column_name=column_name,
+            extender_id=extender_id,
+            properties=properties,
+            other_params=other_params,
+            deduplicate=deduplicate
+        )
+    except Exception as e:
+        logger.error(f"❌ Extension failed: {e}")
+        raise
+
+    # Push to backend
+    logger.info("⬆️  Pushing to backend...")
+    success_message, _ = utility.push_to_backend(
+        config.dataset_id, table_id, backend_payload, debug=False
+    )
+    logger.info(f"✅ {success_message}")
+
+    # Save state
+    output_path = file_manager.save_current_state(extended_table)
+    file_manager.save_stage_snapshot(f"extend_{column_name}", extended_table, config.stage_number)
+
+    logger.info(f"💾 Saved to: {output_path}")
+    return extended_table

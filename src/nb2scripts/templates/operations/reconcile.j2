@@ -1,0 +1,60 @@
+def run_reconcile_operation_{{ index }}(config: Config, file_manager: PipelineFileManager):
+    """
+    RECONCILE Operation: {{ op.name }}
+    Column: {{ params.column_name }}
+    Reconciliator: {{ params.reconciliator_id }}
+    """
+    logger.info("=== RECONCILE OPERATION: {{ op.name }} ===")
+
+    # Load current state
+    table_data = file_manager.load_current_state()
+    if not table_data:
+        raise RuntimeError("No table_data from previous stage")
+
+    # Extract table_id
+    table_id = table_data.get('table', {}).get('id')
+    if not table_id:
+        raise ValueError("No table ID in table_data")
+
+    logger.info(f"🔄 Reconciling table: {table_id}")
+
+    # Initialize managers
+    auth_manager = AuthManager(config.auth_api_url, config.username, config.password)
+    reconciliation_manager = ReconciliationManager(config.table_base_url, auth_manager)
+    utility = Utility(config.table_base_url, auth_manager)
+
+    # Parameters
+    column_name = "{{ params.column_name }}"
+    reconciliator_id = "{{ params.reconciliator_id }}"
+    optional_columns = {{ params.optional_columns | default([]) | tojson }}
+    deduplicate = {{ 'True' if (params.deduplicate | default(false)) else 'False' }}
+
+    logger.info(f"   Column: {column_name}")
+    logger.info(f"   Reconciliator: {reconciliator_id}")
+
+    # Reconcile
+    try:
+        reconciled_table, backend_payload = reconciliation_manager.reconcile(
+            table_data=table_data,
+            column_name=column_name,
+            reconciliator_id=reconciliator_id,
+            optional_columns=optional_columns,
+            deduplicate=deduplicate
+        )
+    except Exception as e:
+        logger.error(f"❌ Reconciliation failed: {e}")
+        raise
+
+    # Push to backend
+    logger.info("⬆️  Pushing to backend...")
+    success_message, _ = utility.push_to_backend(
+        config.dataset_id, table_id, backend_payload, debug=False
+    )
+    logger.info(f"✅ {success_message}")
+
+    # Save state
+    output_path = file_manager.save_current_state(reconciled_table)
+    file_manager.save_stage_snapshot(f"reconcile_{column_name}", reconciled_table, config.stage_number)
+
+    logger.info(f"💾 Saved to: {output_path}")
+    return reconciled_table
