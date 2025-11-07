@@ -85,7 +85,7 @@ with DAG(
     # Task {{ loop.index }}: {{ script.name }}
     {{ safe_task_name }} = DockerOperator(
         task_id="{{ script.name }}",
-        image="semt-pipeline:latest",
+        image="{{ docker_image }}",
         command=["python", "/app/scripts/{{ script.filename }}"],
         environment={
             "RUN_ID": DAG_RUN_ID_TEMPLATE,
@@ -108,7 +108,7 @@ with DAG(
         do_xcom_push=True,
         auto_remove=True,
         docker_url="unix://var/run/docker.sock",
-        network_mode="semt_pipeline_network",
+        network_mode="{{ docker_network }}",
         mounts=[Mount(source=HOST_DATA_DIR, target=CONTAINER_DATA_DIR, type="bind")],
         mount_tmp_dir=False,
         doc_md="""

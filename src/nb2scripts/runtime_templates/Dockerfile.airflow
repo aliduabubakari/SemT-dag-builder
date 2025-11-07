@@ -1,0 +1,10 @@
+FROM apache/airflow:2.8.2-python3.11
+USER root
+RUN apt-get update && apt-get install -y postgresql-client build-essential git curl zip && rm -rf /var/lib/apt/lists/*
+USER airflow
+RUN pip install --no-cache-dir apache-airflow-providers-docker psycopg2-binary
+RUN pip install --no-cache-dir pandas numpy requests aiohttp urllib3 psutil codecarbon openai tiktoken ipython
+RUN pip install --no-cache-dir --upgrade git+https://github.com/I2Tunimib/I2T-library.git
+RUN mkdir -p /opt/airflow/data /opt/airflow/scripts /opt/airflow/semt_py
+ENV PYTHONPATH="/opt/airflow:/opt/airflow/semt_py:$PYTHONPATH"
+ENV SEMT_UI_PATH="/opt/airflow/semt_py"

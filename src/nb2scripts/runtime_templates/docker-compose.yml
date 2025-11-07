@@ -1,0 +1,182 @@
+version: '3.8'
+
+x-python-task-base: &python-task-base
+  build:
+    context: .
+    dockerfile: Dockerfile.python-runner
+  env_file:
+    - .env
+  volumes:
+    - ./data:/app/data
+    - ./scripts:/app/scripts
+  networks:
+    - app_network
+  restart: unless-stopped
+
+services:
+  node-server-api:
+    container_name: node-server-api
+    build:
+      context: ./I2T-backend
+      dockerfile: Dockerfile
+    env_file: ./I2T-backend/.env
+    restart: always
+    ports:
+      - "3003:3003"
+    volumes:
+      - ./I2T-backend:/usr/src/app/
+      - /usr/src/app/node_modules
+    networks:
+      app_network:
+        aliases:
+          - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/api/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  python-task-runner:
+    <<: *python-task-base
+    container_name: python-task-runner
+    image: semt-pipeline:latest
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "Python task runner is ready for Airflow orchestration..."
+        ls -la /app/scripts/
+        tail -f /dev/null
+    depends_on:
+      node-server-api:
+        condition: service_healthy
+
+networks:
+  app_network:
+    driver: bridge
+
+docker-compose.airflow.yml (Airflow stack)
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+    args:
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+  user: "${AIRFLOW_UID:-50000}:0"
+  env_file:
+    - .env
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    DATA_DIR: /app/data
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./scripts:/opt/airflow/scripts
+    - ./data:/app/data
+    - /var/run/docker.sock:/var/run/docker.sock
+  networks:
+    - app_network
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+    networks:
+      - app_network
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    command:
+      - bash
+      - -c
+      - |
+        sleep 10
+        echo "Initializing Airflow database..."
+        airflow db migrate
+        echo "Creating Airflow admin user..."
+        airflow users create \
+          --role Admin \
+          --username "${_AIRFLOW_WWW_USER_USERNAME:-airflow}" \
+          --password "${_AIRFLOW_WWW_USER_PASSWORD:-airflow}" \
+          --firstname Admin --lastname User --email admin@example.org || true
+
+        echo "Provisioning Airflow connections..."
+        airflow connections get 'node_server_api' 2>/dev/null || \
+        airflow connections add 'node_server_api' \
+          --conn-type 'http' \
+          --conn-host 'http://node-server-api:3003/api/' \
+          --conn-login "${API_USERNAME}" \
+          --conn-password "${API_PASSWORD}"
+
+        echo "Provisioning fs_default file connection..."
+        airflow connections get 'fs_default' 2>/dev/null || \
+        airflow connections add 'fs_default' \
+          --conn-type 'File' \
+          --conn-host '/app/data'
+
+        echo "Provisioning variables..."
+        airflow variables set DATA_DIR "/app/data"
+
+        echo "Provisioning complete."
+
+    environment:
+      _AIRFLOW_WWW_USER_USERNAME: "${AIRFLOW_USER:-airflow}"
+      _AIRFLOW_WWW_USER_PASSWORD: "${AIRFLOW_PASSWORD:-airflow}"
+
+volumes:
+  postgres-db-volume:
+
+networks:
+  app_network:
+    driver: bridge

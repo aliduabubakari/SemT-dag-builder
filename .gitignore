@@ -27,3 +27,4 @@ uv.lock
 # Generated outputs
 scripts/
 dags/
+stack/

@@ -48,5 +48,6 @@ include = ["nb2scripts*"]
 [tool.setuptools.package-data]
 nb2scripts = [
   "templates/*.j2",
-  "templates/operations/*.j2"
+  "templates/operations/*.j2",
+  "runtime_templates/*"
 ]

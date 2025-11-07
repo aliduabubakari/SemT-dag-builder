@@ -1,0 +1,27 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PYTHONPATH=/app
+
+RUN apt-get update && apt-get install -y \
+    zip git build-essential curl && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --upgrade pip
+
+RUN pip install --no-cache-dir \
+    requests pandas psutil codecarbon aiohttp ipython openai tiktoken numpy
+
+RUN pip install --no-cache-dir --upgrade git+https://github.com/I2Tunimib/I2T-library.git
+
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+COPY scripts/ /app/scripts/
+RUN mkdir -p /app/data /app/metrics
+
+ARG AIRFLOW_UID=50000
+RUN groupadd -r airflow && useradd -r -g airflow -u ${AIRFLOW_UID} airflow
+RUN chown -R airflow:airflow /app
+
+USER airflow
+ENTRYPOINT ["/app/entrypoint.sh"]
